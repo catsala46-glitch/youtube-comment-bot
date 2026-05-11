@@ -1,0 +1,113 @@
+Create a complete advanced Telegram bot in Python that works as a YouTube Comment Picker and Comment Search Tool.
+
+The bot should use:
+- Python
+- python-telegram-bot library
+- YouTube Data API v3
+- SQLite database for storing comments temporarily
+- Async functions where needed
+
+Main Features:
+1. User sends any YouTube video URL to the bot.
+2. Automatically extract the video ID from the URL.
+3. Use YouTube Data API v3 to fetch ALL available top-level comments from the video.
+4. Fetch comments using pagination with nextPageToken until all comments are loaded.
+5. Save comments in SQLite database.
+6. Store:
+   - commenter username
+   - comment text
+   - channel ID
+   - profile picture URL if available
+7. After fetching, bot should display:
+   - total comments
+   - unique users
+   - video title
+   - fetching time
+8. Add inline keyboard buttons:
+   - 🎲 Pick Winner
+   - 👥 Unique Users
+   - 🔎 Search User
+   - 📄 Export CSV
+   - 🧹 Remove Duplicates
+   - 🏆 Multi Winner
+9. Add command:
+   /search username
+   to search commenters instantly.
+10. Add random winner picker.
+11. Add multi-winner mode:
+   - pick 1, 3, 5, or custom number of winners
+12. Add duplicate filtering:
+   - one entry per username only
+13. Add keyword filter mode:
+   Example:
+   only comments containing #giveaway
+14. Add export feature:
+   - export comments to CSV
+   - export usernames only
+15. Add loading/progress messages while fetching comments.
+16. Add retry system if API fails.
+17. Add proper error handling for:
+   - invalid YouTube URL
+   - comments disabled
+   - quota exceeded
+   - private videos
+18. Add cooldown/rate limit per user.
+19. Add admin logs in console.
+20. Add clean modular file structure.
+
+Bot Commands:
+- /start
+- /help
+- /search
+- /winner
+- /multiwinner
+- /unique
+- /export
+- /stats
+
+UI Style:
+- Modern Telegram styled messages
+- Emoji-based clean formatting
+- Inline buttons
+- Nicely formatted winner announcements
+
+Technical Requirements:
+- Use async Python code
+- Use python-telegram-bot v20+
+- Use requests or aiohttp for API calls
+- Use SQLite database
+- Store API keys in environment variables
+- Add comments explaining every important section
+- Make code beginner friendly
+- Organize files properly:
+   - bot.py
+   - database.py
+   - youtube.py
+   - config.py
+   - requirements.txt
+
+Extra Features:
+- Add caching system to avoid repeated API calls
+- Add comment count progress updates
+- Add support for long videos with huge comment counts
+- Add auto cleanup of old stored comments
+- Add anti-spam protection
+- Add typing indicator while processing
+- Add random spinning animation effect before winner selection
+
+Also explain step-by-step:
+1. How to create Telegram bot using BotFather
+2. How to get Telegram bot token
+3. How to create Google Cloud project
+4. How to enable YouTube Data API v3
+5. How to get YouTube API key
+6. Where to paste API keys
+7. How to install Python
+8. How to install requirements.txt
+9. How to run the bot locally
+10. How to host the bot for free on:
+   - Replit
+   - Render
+   - Railway
+
+Make the final project fully working, production-ready, and beginner friendly.
