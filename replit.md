@@ -1,45 +1,54 @@
-# [Project name]
+# YouTube Comment Picker — Telegram Bot
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A production-ready Telegram bot that fetches all comments from any YouTube video so you can pick random winners, search commenters, filter by keyword, and export to CSV.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `cd telegram-bot && python bot.py` — run the bot (requires secrets below)
+- Required secrets: `TELEGRAM_BOT_TOKEN`, `YOUTUBE_API_KEY`
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Python 3.11+
+- python-telegram-bot v21 (async)
+- aiohttp — async YouTube API calls
+- SQLite — comment storage (no external DB needed)
+- YouTube Data API v3
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+```
+telegram-bot/
+├── bot.py          — All Telegram handlers, inline keyboards, commands
+├── youtube.py      — YouTube Data API v3: URL parsing, metadata, comment pagination
+├── database.py     — SQLite: save/fetch/search/export comments
+├── config.py       — Env var config and tunables
+├── requirements.txt
+└── README.md       — Full setup guide with hosting instructions
+```
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- All YouTube API calls are async via aiohttp — never blocks the bot
+- Comments stored in SQLite locally — no external database needed
+- Cache layer (1 hour TTL) avoids re-fetching the same video repeatedly
+- Winners always drawn from unique-user pool — no duplicate entries
+- Progress callback sends live Telegram updates every 500 fetched comments
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+Users send any YouTube URL to the bot. It fetches all comments (with live progress updates), then offers inline buttons to pick random winners, filter by keyword, search by username, and export to CSV.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- _Populate as you build_
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- YouTube API quota is 10,000 units/day. Each comment page = 1 unit. ~100 medium videos/day.
+- Run `pip install -r telegram-bot/requirements.txt` before starting locally.
+- Set both `TELEGRAM_BOT_TOKEN` and `YOUTUBE_API_KEY` in the Secrets tab before running.
 
 ## Pointers
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- See `telegram-bot/README.md` for full setup guide including BotFather, Google Cloud, and free hosting
