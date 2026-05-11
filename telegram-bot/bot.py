@@ -1,11 +1,5 @@
 """
 bot.py — Main entry point for the YouTube Comment Picker Telegram bot.
-
-Architecture:
-  - config.py   : environment variables and tunables
-  - database.py : SQLite persistence
-  - youtube.py  : YouTube Data API helpers
-  - bot.py      : Telegram handlers, inline keyboards, conversation logic
 """
 
 import asyncio
@@ -52,45 +46,35 @@ logging.basicConfig(
 logger = logging.getLogger("YouTubeBot")
 
 # ── In-memory state ───────────────────────────────────────────────────────────
-# Maps chat_id -> last fetched video_id
 user_video: dict[int, str] = {}
-
-# Rate limiting: chat_id -> last fetch timestamp
 cooldown_map: dict[int, float] = defaultdict(float)
-
-# Tracks which chat is waiting for a search query: chat_id -> video_id
 awaiting_search: dict[int, str] = {}
-
-# Tracks which chat is waiting for a keyword filter: chat_id -> video_id
 awaiting_keyword: dict[int, str] = {}
-
-# Tracks which chat is waiting for a custom winner count: chat_id -> video_id
 awaiting_custom_count: dict[int, str] = {}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _main_keyboard(video_id: str) -> InlineKeyboardMarkup:
-    """Build the main inline action keyboard."""
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🎲 Pick Winner",     callback_data=f"winner:{video_id}"),
-            InlineKeyboardButton("🏆 Multi Winner",    callback_data=f"multi:{video_id}"),
+            InlineKeyboardButton("🎲 Pick Winner",       callback_data=f"winner:{video_id}"),
+            InlineKeyboardButton("🏆 Multi Winner",      callback_data=f"multi:{video_id}"),
         ],
         [
-            InlineKeyboardButton("👥 Unique Users",    callback_data=f"unique:{video_id}"),
-            InlineKeyboardButton("🔎 Search User",     callback_data=f"search:{video_id}"),
+            InlineKeyboardButton("👥 Unique Users",      callback_data=f"unique:{video_id}"),
+            InlineKeyboardButton("🔎 Search User",       callback_data=f"search:{video_id}"),
         ],
         [
-            InlineKeyboardButton("🔑 Filter Keyword",  callback_data=f"keyword:{video_id}"),
+            InlineKeyboardButton("🔑 Filter Keyword",    callback_data=f"keyword:{video_id}"),
             InlineKeyboardButton("🧹 Remove Duplicates", callback_data=f"dedup:{video_id}"),
         ],
         [
-            InlineKeyboardButton("📄 Export CSV",      callback_data=f"export:{video_id}"),
-            InlineKeyboardButton("📋 Usernames Only",  callback_data=f"exportnames:{video_id}"),
+            InlineKeyboardButton("📄 Export CSV",        callback_data=f"export:{video_id}"),
+            InlineKeyboardButton("📋 Usernames Only",    callback_data=f"exportnames:{video_id}"),
         ],
         [
-            InlineKeyboardButton("📊 Stats",           callback_data=f"stats:{video_id}"),
+            InlineKeyboardButton("📊 Stats",             callback_data=f"stats:{video_id}"),
         ],
     ])
 
@@ -98,22 +82,24 @@ def _main_keyboard(video_id: str) -> InlineKeyboardMarkup:
 def _multi_winner_keyboard(video_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("1 Winner",  callback_data=f"mw:1:{video_id}"),
-            InlineKeyboardButton("3 Winners", callback_data=f"mw:3:{video_id}"),
-            InlineKeyboardButton("5 Winners", callback_data=f"mw:5:{video_id}"),
+            InlineKeyboardButton("1 Winner",         callback_data=f"mw:1:{video_id}"),
+            InlineKeyboardButton("3 Winners",        callback_data=f"mw:3:{video_id}"),
+            InlineKeyboardButton("5 Winners",        callback_data=f"mw:5:{video_id}"),
         ],
-        [InlineKeyboardButton("✏️ Custom number", callback_data=f"mw:custom:{video_id}")],
-        [InlineKeyboardButton("⬅️ Back",          callback_data=f"back:{video_id}")],
+        [InlineKeyboardButton("✏️ Custom number",    callback_data=f"mw:custom:{video_id}")],
+        [InlineKeyboardButton("⬅️ Back",             callback_data=f"back:{video_id}")],
     ])
 
 
-def _spinning_frames() -> list[str]:
-    return ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"]
+def _esc(text: str) -> str:
+    """Escape special chars for Markdown v1 (only _ * ` [)."""
+    for ch in ("_", "*", "`", "["):
+        text = text.replace(ch, f"\\{ch}")
+    return text
 
 
 async def _spin_animation(message, prefix: str) -> None:
-    """Replace message text with a spinning emoji for 1.6 s."""
-    frames = _spinning_frames()
+    frames = ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"]
     for i in range(8):
         try:
             await message.edit_text(f"{frames[i % len(frames)]}  {prefix}")
@@ -122,21 +108,12 @@ async def _spin_animation(message, prefix: str) -> None:
         await asyncio.sleep(0.2)
 
 
-def _escape(text: str) -> str:
-    """Escape special chars for MarkdownV2."""
-    for ch in r"_*[]()~`>#+-=|{}.!":
-        text = text.replace(ch, f"\\{ch}")
-    return text
-
-
 def _is_on_cooldown(chat_id: int) -> float:
-    """Return seconds remaining on cooldown, or 0 if not on cooldown."""
     elapsed = time.time() - cooldown_map[chat_id]
-    remaining = config.COOLDOWN_SECONDS - elapsed
-    return max(0.0, remaining)
+    return max(0.0, config.COOLDOWN_SECONDS - elapsed)
 
 
-# ── /start ─────────────────────────────────────────────────────────────────────
+# ── /start ────────────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -154,7 +131,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-# ── /help ──────────────────────────────────────────────────────────────────────
+# ── /help ─────────────────────────────────────────────────────────────────────
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
@@ -172,15 +149,14 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-# ── URL handler — fetch comments ───────────────────────────────────────────────
+# ── URL handler ───────────────────────────────────────────────────────────────
 
 async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Called when the user sends a YouTube URL."""
     chat_id = update.effective_chat.id
     text = update.message.text.strip()
     user = update.effective_user
 
-    # Check if user is entering a search/keyword/custom count reply
+    # Route awaiting replies first
     if chat_id in awaiting_search:
         await _handle_search_reply(update, text)
         return
@@ -212,25 +188,24 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     logger.info("ADMIN | URL fetch | user_id=%s video_id=%s", user.id, video_id)
 
-    # Check cache first
+    # Check cache
     cached = db.get_cache_meta(video_id)
     if cached and (time.time() - cached["fetched_at"]) < config.CACHE_TTL_SECONDS:
         user_video[chat_id] = video_id
         age_min = int((time.time() - cached["fetched_at"]) / 60)
         await update.message.reply_text(
-            f"⚡ *Loaded from cache* \\({age_min} min ago\\)\n\n"
-            f"📹 *{_escape(cached['video_title'])}*\n"
+            f"⚡ *Loaded from cache* ({age_min} min ago)\n\n"
+            f"📹 *{_esc(cached['video_title'])}*\n"
             f"💬 Comments: *{cached['total_count']:,}*",
-            parse_mode=ParseMode.MARKDOWN_V2,
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=_main_keyboard(video_id),
         )
         return
 
-    # Send typing indicator then a progress message
+    # Fetch video info
     await ctx.bot.send_chat_action(chat_id, ChatAction.TYPING)
-    progress_msg = await update.message.reply_text("⏳ Fetching video info…")
+    progress_msg = await update.message.reply_text("⏳ Fetching video info...")
 
-    # Fetch video metadata
     try:
         info = await fetch_video_info(video_id)
     except VideoNotFoundError:
@@ -241,15 +216,13 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     await progress_msg.edit_text(
-        f"📹 *{_escape(info['title'])}*\n"
+        f"📹 *{_esc(info['title'])}*\n"
         f"📊 Expected comments: *{info['comment_count']:,}*\n\n"
-        "⏳ Fetching comments… this may take a while for large videos.",
-        parse_mode=ParseMode.MARKDOWN_V2,
+        "⏳ Fetching comments... this may take a while for large videos.",
+        parse_mode=ParseMode.MARKDOWN,
     )
 
     start_ts = time.time()
-
-    # Progress callback — edit the message every 500 comments
     last_update = [0]
 
     async def on_progress(count: int) -> None:
@@ -257,16 +230,18 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             last_update[0] = count
             try:
                 await progress_msg.edit_text(
-                    f"📥 Fetching comments…\n"
-                    f"✅ *{count:,}* fetched so far\\.\\.\\.",
-                    parse_mode=ParseMode.MARKDOWN_V2,
+                    f"📥 Fetching comments...\n"
+                    f"✅ *{count:,}* fetched so far...",
+                    parse_mode=ParseMode.MARKDOWN,
                 )
             except Exception:
                 pass
 
     # Fetch all comments
     try:
-        comments = await fetch_all_comments(video_id, progress_cb=on_progress, max_comments=config.MAX_COMMENTS)
+        comments = await fetch_all_comments(
+            video_id, progress_cb=on_progress, max_comments=config.MAX_COMMENTS
+        )
     except CommentsDisabledError:
         await progress_msg.edit_text("🔕 Comments are disabled on this video.")
         return
@@ -280,7 +255,6 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     elapsed = time.time() - start_ts
     unique_users = len({c["author"] for c in comments})
 
-    # Persist to DB
     db.save_comments(video_id, comments, info["title"])
     user_video[chat_id] = video_id
     cooldown_map[chat_id] = time.time()
@@ -291,33 +265,30 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     await progress_msg.edit_text(
-        f"✅ *Done\\!*\n\n"
-        f"📹 *{_escape(info['title'])}*\n"
+        f"✅ *Done!*\n\n"
+        f"📹 *{_esc(info['title'])}*\n"
         f"💬 Total comments: *{len(comments):,}*\n"
         f"👥 Unique users: *{unique_users:,}*\n"
         f"⏱ Fetched in: *{elapsed:.1f}s*\n\n"
         "Choose an action below 👇",
-        parse_mode=ParseMode.MARKDOWN_V2,
+        parse_mode=ParseMode.MARKDOWN,
         reply_markup=_main_keyboard(video_id),
     )
 
 
-# ── Inline button dispatcher ───────────────────────────────────────────────────
+# ── Inline button dispatcher ──────────────────────────────────────────────────
 
 async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-
     data = query.data
     chat_id = update.effective_chat.id
 
     if data.startswith("winner:"):
-        video_id = data.split(":", 1)[1]
-        await action_winner(query, video_id, n=1)
+        await action_winner(query, data.split(":", 1)[1], n=1)
 
     elif data.startswith("multi:"):
-        video_id = data.split(":", 1)[1]
-        await query.edit_message_reply_markup(_multi_winner_keyboard(video_id))
+        await query.edit_message_reply_markup(_multi_winner_keyboard(data.split(":", 1)[1]))
 
     elif data.startswith("mw:"):
         _, count_str, video_id = data.split(":", 2)
@@ -331,8 +302,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
             await action_winner(query, video_id, n=int(count_str))
 
     elif data.startswith("unique:"):
-        video_id = data.split(":", 1)[1]
-        await action_unique(query, video_id)
+        await action_unique(query, data.split(":", 1)[1])
 
     elif data.startswith("search:"):
         video_id = data.split(":", 1)[1]
@@ -346,35 +316,29 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         video_id = data.split(":", 1)[1]
         awaiting_keyword[chat_id] = video_id
         await query.edit_message_text(
-            "🔑 Send a *keyword* to filter comments \\(e\\.g\\. `\\#giveaway`\\):",
-            parse_mode=ParseMode.MARKDOWN_V2,
+            "🔑 Send a *keyword* to filter comments (e.g. `#giveaway`):",
+            parse_mode=ParseMode.MARKDOWN,
         )
 
     elif data.startswith("dedup:"):
-        video_id = data.split(":", 1)[1]
-        await action_dedup(query, video_id)
+        await action_dedup(query, data.split(":", 1)[1])
 
     elif data.startswith("export:"):
-        video_id = data.split(":", 1)[1]
-        await action_export(query, update, video_id, usernames_only=False)
+        await action_export(query, update, data.split(":", 1)[1], usernames_only=False)
 
     elif data.startswith("exportnames:"):
-        video_id = data.split(":", 1)[1]
-        await action_export(query, update, video_id, usernames_only=True)
+        await action_export(query, update, data.split(":", 1)[1], usernames_only=True)
 
     elif data.startswith("stats:"):
-        video_id = data.split(":", 1)[1]
-        await action_stats(query, video_id)
+        await action_stats(query, data.split(":", 1)[1])
 
     elif data.startswith("back:"):
-        video_id = data.split(":", 1)[1]
-        await query.edit_message_reply_markup(_main_keyboard(video_id))
+        await query.edit_message_reply_markup(_main_keyboard(data.split(":", 1)[1]))
 
 
 # ── Actions ───────────────────────────────────────────────────────────────────
 
 async def action_winner(query, video_id: str, n: int) -> None:
-    """Pick n random winners from unique users."""
     meta = db.get_cache_meta(video_id)
     comments = db.get_unique_comments(video_id)
 
@@ -382,31 +346,34 @@ async def action_winner(query, video_id: str, n: int) -> None:
         await query.edit_message_text("❌ No comments found. Please re-fetch the video.")
         return
 
-    if n > len(comments):
-        n = len(comments)
+    n = min(n, len(comments))
 
-    # Spinning animation
-    spin_msg = await query.edit_message_text("🎰 Picking winner…")
-    await _spin_animation(spin_msg, "Picking winners…")
+    spin_msg = await query.edit_message_text("🎰 Picking winner...")
+    await _spin_animation(spin_msg, "Selecting winners...")
 
     winners = random.sample(comments, n)
     title = meta["video_title"] if meta else video_id
 
-    lines = [f"🏆 *Winner{'s' if n > 1 else ''} — {_escape(title)}*\n"]
+    lines = [f"🏆 *Winner{'s' if n > 1 else ''} — {_esc(title)}*\n"]
     for i, w in enumerate(winners, 1):
         medal = ["🥇", "🥈", "🥉"][i - 1] if i <= 3 else f"#{i}"
         chan = w.get("author_chan")
-        profile_link = f"[{_escape(w['author'])}](https://www.youtube.com/channel/{chan})" if chan else _escape(w["author"])
-        lines.append(f"{medal} {profile_link}")
-        lines.append(f"   💬 _{_escape(w['text'][:120])}_\n")
+        if chan:
+            name_link = f"[{_esc(w['author'])}](https://www.youtube.com/channel/{chan})"
+        else:
+            name_link = f"*{_esc(w['author'])}*"
+        preview = _esc(w["text"][:120].replace("\n", " "))
+        lines.append(f"{medal} {name_link}")
+        lines.append(f"   _{preview}_\n")
 
     lines.append(f"\n🎲 Selected from *{len(comments):,}* unique users")
 
+    back_data = f"winner:{video_id}" if n == 1 else f"mw:{n}:{video_id}"
     await spin_msg.edit_text(
         "\n".join(lines),
-        parse_mode=ParseMode.MARKDOWN_V2,
+        parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔄 Pick Again", callback_data=f"{'winner' if n == 1 else f'mw:{n}'}:{video_id}"),
+            InlineKeyboardButton("🔄 Pick Again", callback_data=back_data),
             InlineKeyboardButton("⬅️ Back",       callback_data=f"back:{video_id}"),
         ]]),
         disable_web_page_preview=True,
@@ -414,7 +381,6 @@ async def action_winner(query, video_id: str, n: int) -> None:
 
 
 async def action_unique(query, video_id: str) -> None:
-    """Show a summary of unique commenters."""
     comments = db.get_unique_comments(video_id)
     all_comments = db.get_comments(video_id)
 
@@ -424,15 +390,15 @@ async def action_unique(query, video_id: str) -> None:
 
     dupes = len(all_comments) - len(comments)
     sample = comments[:10]
-    names = "\n".join(f"• {_escape(c['author'])}" for c in sample)
-    more = f"\n\\+{len(comments) - 10:,} more…" if len(comments) > 10 else ""
+    names = "\n".join(f"• {_esc(c['author'])}" for c in sample)
+    more = f"\n+{len(comments) - 10:,} more..." if len(comments) > 10 else ""
 
     await query.edit_message_text(
         f"👥 *Unique Commenters*\n\n"
         f"Total unique: *{len(comments):,}*\n"
         f"Duplicate entries removed: *{dupes:,}*\n\n"
-        f"*Sample \\(first 10\\):*\n{names}{more}",
-        parse_mode=ParseMode.MARKDOWN_V2,
+        f"*Sample (first 10):*\n{names}{more}",
+        parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("⬅️ Back", callback_data=f"back:{video_id}"),
         ]]),
@@ -440,7 +406,6 @@ async def action_unique(query, video_id: str) -> None:
 
 
 async def action_dedup(query, video_id: str) -> None:
-    """Show deduplication summary (data is already stored with unique queries available)."""
     all_c = db.get_comments(video_id)
     unique_c = db.get_unique_comments(video_id)
     removed = len(all_c) - len(unique_c)
@@ -450,8 +415,8 @@ async def action_dedup(query, video_id: str) -> None:
         f"Total comments: *{len(all_c):,}*\n"
         f"Unique users: *{len(unique_c):,}*\n"
         f"Duplicates removed: *{removed:,}*\n\n"
-        "When picking winners, *Unique Users mode* is always used automatically\\.",
-        parse_mode=ParseMode.MARKDOWN_V2,
+        "When picking winners, *Unique Users mode* is always used automatically.",
+        parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("⬅️ Back", callback_data=f"back:{video_id}"),
         ]]),
@@ -459,7 +424,6 @@ async def action_dedup(query, video_id: str) -> None:
 
 
 async def action_export(query, update: Update, video_id: str, usernames_only: bool) -> None:
-    """Export comments to CSV and send as a file."""
     comments = db.get_comments(video_id)
     if not comments:
         await query.edit_message_text("❌ No comments to export.")
@@ -473,7 +437,7 @@ async def action_export(query, update: Update, video_id: str, usernames_only: bo
 
     if usernames_only:
         writer.writerow(["username", "channel_id"])
-        seen = set()
+        seen: set[str] = set()
         for c in comments:
             if c["author"] not in seen:
                 seen.add(c["author"])
@@ -486,7 +450,7 @@ async def action_export(query, update: Update, video_id: str, usernames_only: bo
         filename = f"comments_{video_id}.csv"
 
     buf.seek(0)
-    file_bytes = buf.getvalue().encode("utf-8-sig")  # UTF-8 BOM for Excel
+    file_bytes = buf.getvalue().encode("utf-8-sig")
 
     await update.effective_chat.send_document(
         document=io.BytesIO(file_bytes),
@@ -501,7 +465,6 @@ async def action_export(query, update: Update, video_id: str, usernames_only: bo
 
 
 async def action_stats(query, video_id: str) -> None:
-    """Display statistics for the fetched video."""
     meta = db.get_cache_meta(video_id)
     all_c = db.get_comments(video_id)
     unique_c = db.get_unique_comments(video_id)
@@ -514,20 +477,20 @@ async def action_stats(query, video_id: str) -> None:
 
     await query.edit_message_text(
         f"📊 *Statistics*\n\n"
-        f"📹 *{_escape(meta['video_title'])}*\n"
+        f"📹 *{_esc(meta['video_title'])}*\n"
         f"🆔 Video ID: `{video_id}`\n\n"
         f"💬 Total comments: *{len(all_c):,}*\n"
         f"👥 Unique users: *{len(unique_c):,}*\n"
         f"🔁 Duplicates: *{len(all_c) - len(unique_c):,}*\n\n"
         f"🕐 Fetched *{age_min}* min ago",
-        parse_mode=ParseMode.MARKDOWN_V2,
+        parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("⬅️ Back", callback_data=f"back:{video_id}"),
         ]]),
     )
 
 
-# ── Search / keyword reply handlers ───────────────────────────────────────────
+# ── Search / keyword / custom count reply handlers ───────────────────────────
 
 async def _handle_search_reply(update: Update, text: str) -> None:
     chat_id = update.effective_chat.id
@@ -536,21 +499,21 @@ async def _handle_search_reply(update: Update, text: str) -> None:
 
     if not results:
         await update.message.reply_text(
-            f"🔎 No commenters matching *{_escape(text)}* found.",
-            parse_mode=ParseMode.MARKDOWN_V2,
+            f"🔎 No commenters matching *{_esc(text)}* found.",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=_main_keyboard(video_id),
         )
         return
 
-    lines = [f"🔎 *Search results for* `{_escape(text)}`\n"]
+    lines = [f"🔎 *Search results for* `{_esc(text)}`\n"]
     for r in results[:20]:
-        lines.append(f"• *{_escape(r['author'])}*: _{_escape(r['text'][:100])}_")
+        lines.append(f"• *{_esc(r['author'])}*: _{_esc(r['text'][:100])}_")
     if len(results) > 20:
-        lines.append(f"\n\\+{len(results) - 20} more matches…")
+        lines.append(f"\n+{len(results) - 20} more matches...")
 
     await update.message.reply_text(
         "\n".join(lines),
-        parse_mode=ParseMode.MARKDOWN_V2,
+        parse_mode=ParseMode.MARKDOWN,
         reply_markup=_main_keyboard(video_id),
     )
 
@@ -562,20 +525,22 @@ async def _handle_keyword_reply(update: Update, text: str) -> None:
 
     if not results:
         await update.message.reply_text(
-            f"🔑 No comments containing *{_escape(text)}* found.",
-            parse_mode=ParseMode.MARKDOWN_V2,
+            f"🔑 No comments containing *{_esc(text)}* found.",
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=_main_keyboard(video_id),
         )
         return
 
     unique = len({r["author"] for r in results})
     await update.message.reply_text(
-        f"🔑 *Keyword filter:* `{_escape(text)}`\n\n"
-        f"Found *{len(results):,}* comments from *{unique:,}* users\\.",
-        parse_mode=ParseMode.MARKDOWN_V2,
+        f"🔑 *Keyword filter:* `{_esc(text)}`\n\n"
+        f"Found *{len(results):,}* comments from *{unique:,}* users.",
+        parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"🎲 Pick Winner from {len(results):,} filtered",
-                                  callback_data=f"winner:{video_id}")],
+            [InlineKeyboardButton(
+                f"🎲 Pick Winner from {len(results):,} filtered",
+                callback_data=f"winner:{video_id}"
+            )],
             [InlineKeyboardButton("⬅️ Back", callback_data=f"back:{video_id}")],
         ]),
     )
@@ -596,7 +561,6 @@ async def _handle_custom_count_reply(update: Update, text: str) -> None:
         )
         return
 
-    # Fake a callback-like object to reuse action_winner
     class _FakeQuery:
         async def edit_message_text(self, *a, **kw):
             return await update.message.reply_text(*a, **kw)
@@ -604,11 +568,10 @@ async def _handle_custom_count_reply(update: Update, text: str) -> None:
     await action_winner(_FakeQuery(), video_id, n=n)
 
 
-# ── Slash command shortcuts ────────────────────────────────────────────────────
+# ── Slash command shortcuts ───────────────────────────────────────────────────
 
 async def _require_video(update: Update) -> str | None:
-    chat_id = update.effective_chat.id
-    video_id = user_video.get(chat_id)
+    video_id = user_video.get(update.effective_chat.id)
     if not video_id:
         await update.message.reply_text(
             "❗ Please send a YouTube URL first so I can fetch comments."
@@ -632,10 +595,7 @@ async def cmd_multiwinner(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
     video_id = await _require_video(update)
     if not video_id:
         return
-    await update.message.reply_text(
-        "🏆 How many winners?",
-        reply_markup=_multi_winner_keyboard(video_id),
-    )
+    await update.message.reply_text("🏆 How many winners?", reply_markup=_multi_winner_keyboard(video_id))
 
 
 async def cmd_unique(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -662,12 +622,12 @@ async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not results:
             await update.message.reply_text(f"🔎 No results for '{username}'.")
             return
-        lines = [f"🔎 *Results for* `{_escape(username)}`\n"]
+        lines = [f"🔎 *Results for* `{_esc(username)}`\n"]
         for r in results[:20]:
-            lines.append(f"• *{_escape(r['author'])}*: _{_escape(r['text'][:100])}_")
+            lines.append(f"• *{_esc(r['author'])}*: _{_esc(r['text'][:100])}_")
         await update.message.reply_text(
             "\n".join(lines),
-            parse_mode=ParseMode.MARKDOWN_V2,
+            parse_mode=ParseMode.MARKDOWN,
             reply_markup=_main_keyboard(video_id),
         )
     else:
@@ -714,38 +674,29 @@ async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 def main() -> None:
     if not config.TELEGRAM_BOT_TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set. Add it to your environment secrets.")
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set.")
     if not config.YOUTUBE_API_KEY:
-        raise RuntimeError("YOUTUBE_API_KEY is not set. Add it to your environment secrets.")
+        raise RuntimeError("YOUTUBE_API_KEY is not set.")
 
-    # Initialise database
     db.init_db()
-
-    # Clean up old records on startup
     removed = db.cleanup_old_records(config.DB_MAX_AGE_SECONDS)
     if removed:
         logger.info("ADMIN | Cleaned %d old comment rows from DB", removed)
 
-    # Build app
     app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
 
-    # Commands
-    app.add_handler(CommandHandler("start",        cmd_start))
-    app.add_handler(CommandHandler("help",         cmd_help))
-    app.add_handler(CommandHandler("winner",       cmd_winner))
-    app.add_handler(CommandHandler("multiwinner",  cmd_multiwinner))
-    app.add_handler(CommandHandler("unique",       cmd_unique))
-    app.add_handler(CommandHandler("search",       cmd_search))
-    app.add_handler(CommandHandler("export",       cmd_export))
-    app.add_handler(CommandHandler("stats",        cmd_stats))
-
-    # Inline button handler
+    app.add_handler(CommandHandler("start",       cmd_start))
+    app.add_handler(CommandHandler("help",        cmd_help))
+    app.add_handler(CommandHandler("winner",      cmd_winner))
+    app.add_handler(CommandHandler("multiwinner", cmd_multiwinner))
+    app.add_handler(CommandHandler("unique",      cmd_unique))
+    app.add_handler(CommandHandler("search",      cmd_search))
+    app.add_handler(CommandHandler("export",      cmd_export))
+    app.add_handler(CommandHandler("stats",       cmd_stats))
     app.add_handler(CallbackQueryHandler(handle_callback))
-
-    # Message handler — catches URLs and text replies
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
 
-    logger.info("ADMIN | Bot started and polling…")
+    logger.info("ADMIN | Bot started and polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
