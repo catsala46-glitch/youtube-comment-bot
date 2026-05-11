@@ -170,6 +170,7 @@ async def fetch_all_comments(
             for item in data.get("items", []):
                 top = item["snippet"]["topLevelComment"]["snippet"]
                 comments.append({
+                    "comment_id": item["snippet"]["topLevelComment"]["id"],
                     "author": top.get("authorDisplayName", "Unknown"),
                     "author_chan": top.get("authorChannelId", {}).get("value"),
                     "profile_pic": top.get("authorProfileImageUrl"),

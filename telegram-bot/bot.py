@@ -358,13 +358,28 @@ async def action_winner(query, video_id: str, n: int) -> None:
     for i, w in enumerate(winners, 1):
         medal = ["🥇", "🥈", "🥉"][i - 1] if i <= 3 else f"#{i}"
         chan = w.get("author_chan")
+        cid = w.get("comment_id")
+
+        # Link the author's name to their YouTube channel if available
         if chan:
             name_link = f"[{_esc(w['author'])}](https://www.youtube.com/channel/{chan})"
         else:
             name_link = f"*{_esc(w['author'])}*"
+
+        # Direct link to the exact comment on YouTube
+        if cid:
+            comment_url = f"https://www.youtube.com/watch?v={video_id}&lc={cid}"
+            comment_link = f"[View comment]({comment_url})"
+        else:
+            comment_link = ""
+
         preview = _esc(w["text"][:120].replace("\n", " "))
         lines.append(f"{medal} {name_link}")
-        lines.append(f"   _{preview}_\n")
+        lines.append(f"   _{preview}_")
+        if comment_link:
+            lines.append(f"   🔗 {comment_link}\n")
+        else:
+            lines.append("")
 
     lines.append(f"\n🎲 Selected from *{len(comments):,}* unique users")
 

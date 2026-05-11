@@ -21,18 +21,20 @@ def get_conn() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Create tables if they don't exist yet."""
+    """Create tables if they don't exist yet, and run migrations."""
     with get_conn() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS comments (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 video_id     TEXT    NOT NULL,
+                comment_id   TEXT,
                 author       TEXT    NOT NULL,
                 author_chan   TEXT,
                 profile_pic  TEXT,
                 text         TEXT    NOT NULL,
                 fetched_at   INTEGER NOT NULL
             );
+
 
             CREATE INDEX IF NOT EXISTS idx_comments_video
                 ON comments(video_id);
@@ -44,6 +46,10 @@ def init_db() -> None:
                 video_title  TEXT
             );
         """)
+        # Migration: add comment_id column to existing databases that predate this column
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(comments)")}
+        if "comment_id" not in existing:
+            conn.execute("ALTER TABLE comments ADD COLUMN comment_id TEXT")
 
 
 def save_comments(video_id: str, comments: list[dict], video_title: str) -> None:
@@ -56,12 +62,13 @@ def save_comments(video_id: str, comments: list[dict], video_title: str) -> None
         conn.execute("DELETE FROM comments WHERE video_id = ?", (video_id,))
         conn.executemany(
             """
-            INSERT INTO comments (video_id, author, author_chan, profile_pic, text, fetched_at)
-            VALUES (:video_id, :author, :author_chan, :profile_pic, :text, :fetched_at)
+            INSERT INTO comments (video_id, comment_id, author, author_chan, profile_pic, text, fetched_at)
+            VALUES (:video_id, :comment_id, :author, :author_chan, :profile_pic, :text, :fetched_at)
             """,
             [
                 {
                     "video_id": video_id,
+                    "comment_id": c.get("comment_id"),
                     "author": c["author"],
                     "author_chan": c.get("author_chan"),
                     "profile_pic": c.get("profile_pic"),
@@ -88,7 +95,7 @@ def get_comments(video_id: str) -> list[dict]:
     """Return all stored comments for *video_id* as plain dicts."""
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT author, author_chan, profile_pic, text FROM comments WHERE video_id = ?",
+            "SELECT comment_id, author, author_chan, profile_pic, text FROM comments WHERE video_id = ?",
             (video_id,),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -99,7 +106,7 @@ def get_unique_comments(video_id: str) -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT author, author_chan, profile_pic, text
+            SELECT comment_id, author, author_chan, profile_pic, text
             FROM comments
             WHERE video_id = ?
             GROUP BY author
@@ -114,7 +121,7 @@ def search_comments(video_id: str, username: str) -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT author, author_chan, profile_pic, text
+            SELECT comment_id, author, author_chan, profile_pic, text
             FROM comments
             WHERE video_id = ? AND LOWER(author) LIKE LOWER(?)
             """,
@@ -128,7 +135,7 @@ def filter_by_keyword(video_id: str, keyword: str) -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT author, author_chan, profile_pic, text
+            SELECT comment_id, author, author_chan, profile_pic, text
             FROM comments
             WHERE video_id = ? AND LOWER(text) LIKE LOWER(?)
             """,
