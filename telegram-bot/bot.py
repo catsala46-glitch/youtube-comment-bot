@@ -522,14 +522,22 @@ async def _handle_search_reply(update: Update, text: str) -> None:
 
     lines = [f"🔎 *Search results for* `{_esc(text)}`\n"]
     for r in results[:20]:
-        lines.append(f"• *{_esc(r['author'])}*: _{_esc(r['text'][:100])}_")
+        cid = r.get("comment_id")
+        if cid:
+            comment_url = f"https://www.youtube.com/watch?v={video_id}&lc={cid}"
+            link_part = f" — [View comment]({comment_url})"
+        else:
+            link_part = ""
+        lines.append(f"• *{_esc(r['author'])}*{link_part}")
+        lines.append(f"  _{_esc(r['text'][:100])}_\n")
     if len(results) > 20:
-        lines.append(f"\n+{len(results) - 20} more matches...")
+        lines.append(f"+{len(results) - 20} more matches...")
 
     await update.message.reply_text(
         "\n".join(lines),
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=_main_keyboard(video_id),
+        disable_web_page_preview=True,
     )
 
 
@@ -639,11 +647,19 @@ async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             return
         lines = [f"🔎 *Results for* `{_esc(username)}`\n"]
         for r in results[:20]:
-            lines.append(f"• *{_esc(r['author'])}*: _{_esc(r['text'][:100])}_")
+            cid = r.get("comment_id")
+            if cid:
+                comment_url = f"https://www.youtube.com/watch?v={video_id}&lc={cid}"
+                link_part = f" — [View comment]({comment_url})"
+            else:
+                link_part = ""
+            lines.append(f"• *{_esc(r['author'])}*{link_part}")
+            lines.append(f"  _{_esc(r['text'][:100])}_\n")
         await update.message.reply_text(
             "\n".join(lines),
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=_main_keyboard(video_id),
+            disable_web_page_preview=True,
         )
     else:
         awaiting_search[update.effective_chat.id] = video_id
