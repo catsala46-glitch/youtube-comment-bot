@@ -54,6 +54,23 @@ def extract_video_id(url: str) -> str | None:
     return None
 
 
+def extract_comment_info(url: str) -> tuple[str, str] | None:
+    """
+    If the URL contains a YouTube comment link (has &lc= parameter),
+    return (video_id, comment_id). Otherwise return None.
+    """
+    url = url.strip()
+    parsed = urlparse(url)
+    if "youtube.com" not in parsed.netloc:
+        return None
+    qs = parse_qs(parsed.query)
+    video_id = qs.get("v", [None])[0]
+    comment_id = qs.get("lc", [None])[0]
+    if video_id and comment_id and _valid_id(video_id):
+        return (video_id, comment_id)
+    return None
+
+
 def _valid_id(vid: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9_-]{11}", vid))
 
@@ -191,6 +208,52 @@ async def fetch_all_comments(
             await asyncio.sleep(0.1)
 
     return comments
+
+
+# ── Comment replies fetching ──────────────────────────────────────────────────
+
+async def fetch_comment_replies(comment_id: str) -> list[dict]:
+    """
+    Fetch all replies for a top-level comment using its comment ID.
+
+    Each returned dict has:
+      reply_id, author, author_chan, text
+
+    YouTube's replies endpoint returns up to 100 per page and supports
+    pagination via nextPageToken.
+    """
+    replies: list[dict] = []
+    page_token: str | None = None
+
+    async with aiohttp.ClientSession() as session:
+        while True:
+            params: dict = {
+                "part": "snippet",
+                "parentId": comment_id,
+                "maxResults": 100,
+                "textFormat": "plainText",
+            }
+            if page_token:
+                params["pageToken"] = page_token
+
+            data = await _api_get(session, "comments", params)
+
+            for item in data.get("items", []):
+                snip = item["snippet"]
+                replies.append({
+                    "reply_id": item["id"],
+                    "author": snip.get("authorDisplayName", "Unknown"),
+                    "author_chan": snip.get("authorChannelId", {}).get("value"),
+                    "text": snip.get("textDisplay", ""),
+                })
+
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+
+            await asyncio.sleep(0.1)
+
+    return replies
 
 
 # ── Custom exceptions ─────────────────────────────────────────────────────────

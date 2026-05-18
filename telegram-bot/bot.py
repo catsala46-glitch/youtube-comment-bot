@@ -32,8 +32,10 @@ from youtube import (
     QuotaExceededError,
     VideoNotFoundError,
     YouTubeAPIError,
+    extract_comment_info,
     extract_video_id,
     fetch_all_comments,
+    fetch_comment_replies,
     fetch_video_info,
 )
 
@@ -165,6 +167,12 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if chat_id in awaiting_custom_count:
         await _handle_custom_count_reply(update, text)
+        return
+
+    # Check if it's a comment link (has &lc= in the URL)
+    comment_info = extract_comment_info(text)
+    if comment_info:
+        await handle_comment_replies(update, comment_info[0], comment_info[1])
         return
 
     # Extract video ID
@@ -502,6 +510,68 @@ async def action_stats(query, video_id: str) -> None:
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("⬅️ Back", callback_data=f"back:{video_id}"),
         ]]),
+    )
+
+
+# ── Comment replies handler ───────────────────────────────────────────────────
+
+async def handle_comment_replies(update: Update, video_id: str, comment_id: str) -> None:
+    """Fetch all replies to a comment and display them with direct links."""
+    progress_msg = await update.message.reply_text("🔍 Fetching replies to that comment...")
+
+    try:
+        replies = await fetch_comment_replies(comment_id)
+    except QuotaExceededError:
+        await progress_msg.edit_text("⚠️ YouTube API quota exceeded. Please try again tomorrow.")
+        return
+    except YouTubeAPIError as exc:
+        await progress_msg.edit_text(f"❌ Error fetching replies: {exc}")
+        return
+
+    if not replies:
+        await progress_msg.edit_text(
+            "💬 This comment has no replies yet.\n\n"
+            "Send the video URL to fetch all its top-level comments instead."
+        )
+        return
+
+    parent_url = f"https://www.youtube.com/watch?v={video_id}&lc={comment_id}"
+    lines = [
+        f"💬 *Replies to [this comment]({parent_url})*\n"
+        f"Found *{len(replies)}* repl{'y' if len(replies) == 1 else 'ies'}:\n"
+    ]
+
+    for i, r in enumerate(replies[:50], 1):
+        reply_id = r.get("reply_id", "")
+        author = _esc(r["author"])
+        preview = _esc(r["text"][:100].replace("\n", " "))
+
+        if reply_id:
+            reply_url = f"https://www.youtube.com/watch?v={video_id}&lc={reply_id}"
+            link = f"[View reply]({reply_url})"
+        else:
+            link = ""
+
+        chan = r.get("author_chan")
+        if chan:
+            name_part = f"[{author}](https://www.youtube.com/channel/{chan})"
+        else:
+            name_part = f"*{author}*"
+
+        lines.append(f"*{i}.* {name_part}")
+        lines.append(f"   _{preview}_")
+        if link:
+            lines.append(f"   🔗 {link}\n")
+        else:
+            lines.append("")
+
+    if len(replies) > 50:
+        lines.append(f"\n_...and {len(replies) - 50} more replies not shown._")
+
+    await progress_msg.edit_text(
+        "\n".join(lines),
+        parse_mode=ParseMode.MARKDOWN,
+        disable_web_page_preview=True,
     )
 
 
