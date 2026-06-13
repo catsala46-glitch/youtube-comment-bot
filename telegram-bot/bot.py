@@ -76,6 +76,9 @@ def _main_keyboard(video_id: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton("📋 Usernames Only",    callback_data=f"exportnames:{video_id}"),
         ],
         [
+            InlineKeyboardButton("💬 View All Comments", callback_data=f"allcomments:{video_id}:0"),
+        ],
+        [
             InlineKeyboardButton("📊 Stats",             callback_data=f"stats:{video_id}"),
         ],
     ])
@@ -340,6 +343,10 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
     elif data.startswith("stats:"):
         await action_stats(query, data.split(":", 1)[1])
 
+    elif data.startswith("allcomments:"):
+        parts = data.split(":")
+        await action_all_comments(query, parts[1], int(parts[2]))
+
     elif data.startswith("back:"):
         await query.edit_message_reply_markup(_main_keyboard(data.split(":", 1)[1]))
 
@@ -510,6 +517,64 @@ async def action_stats(query, video_id: str) -> None:
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("⬅️ Back", callback_data=f"back:{video_id}"),
         ]]),
+    )
+
+
+# ── All comments paginated viewer ────────────────────────────────────────────
+
+PAGE_SIZE = 10
+
+
+async def action_all_comments(query, video_id: str, page: int) -> None:
+    comments = db.get_comments(video_id)
+    meta = db.get_cache_meta(video_id)
+
+    if not comments:
+        await query.edit_message_text("❌ No comments found. Please re-fetch the video.")
+        return
+
+    total = len(comments)
+    total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
+    page = max(0, min(page, total_pages - 1))
+
+    start = page * PAGE_SIZE
+    end = min(start + PAGE_SIZE, total)
+    slice_ = comments[start:end]
+
+    title = _esc(meta["video_title"]) if meta else video_id
+    lines = [
+        f"💬 *All Comments — {title}*",
+        f"_Page {page + 1} of {total_pages} • {total:,} total_\n",
+    ]
+
+    for i, c in enumerate(slice_, start + 1):
+        author = _esc(c["author"])
+        preview = _esc(c["text"][:80].replace("\n", " "))
+        cid = c.get("comment_id")
+        if cid:
+            url = f"https://www.youtube.com/watch?v={video_id}&lc={cid}"
+            link = f"[🔗]({url})"
+        else:
+            link = ""
+        lines.append(f"*{i}.* *{author}* {link}")
+        lines.append(f"_{preview}_\n")
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"allcomments:{video_id}:{page - 1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"allcomments:{video_id}:{page + 1}"))
+
+    keyboard = []
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Menu", callback_data=f"back:{video_id}")])
+
+    await query.edit_message_text(
+        "\n".join(lines),
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        disable_web_page_preview=True,
     )
 
 
