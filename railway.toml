@@ -1,8 +1,8 @@
 [build]
 builder = "nixpacks"
-buildCommand = "pip install -r telegram-bot/requirements.txt"
+buildCommand = "pip3 install -r telegram-bot/requirements.txt"
 
 [deploy]
-startCommand = "python telegram-bot/bot.py"
+startCommand = "python3 telegram-bot/bot.py"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
