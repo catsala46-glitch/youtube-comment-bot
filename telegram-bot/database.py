@@ -153,6 +153,13 @@ def get_cache_meta(video_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def clear_cache(video_id: str) -> None:
+    """Delete all stored comments and cache metadata for *video_id*."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM comments WHERE video_id = ?", (video_id,))
+        conn.execute("DELETE FROM cache_meta WHERE video_id = ?", (video_id,))
+
+
 def cleanup_old_records(max_age_seconds: int) -> int:
     """Delete comments older than *max_age_seconds*. Returns row count deleted."""
     cutoff = int(time.time()) - max_age_seconds

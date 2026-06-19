@@ -80,6 +80,7 @@ def _main_keyboard(video_id: str) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("📊 Stats",             callback_data=f"stats:{video_id}"),
+            InlineKeyboardButton("🔄 Re-fetch",          callback_data=f"refetch:{video_id}"),
         ],
     ])
 
@@ -347,11 +348,91 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         parts = data.split(":")
         await action_all_comments(query, parts[1], int(parts[2]))
 
+    elif data.startswith("refetch:"):
+        await action_refetch(query, update, data.split(":", 1)[1])
+
     elif data.startswith("back:"):
         await query.edit_message_reply_markup(_main_keyboard(data.split(":", 1)[1]))
 
 
 # ── Actions ───────────────────────────────────────────────────────────────────
+
+async def action_refetch(query, update: Update, video_id: str) -> None:
+    """Clear cache and re-fetch fresh comments for video_id."""
+    chat_id = update.effective_chat.id
+
+    db.clear_cache(video_id)
+    user_video[chat_id] = video_id
+
+    await query.edit_message_text("🔄 Cache cleared! Fetching fresh comments...")
+
+    try:
+        info = await fetch_video_info(video_id)
+    except VideoNotFoundError:
+        await query.edit_message_text("❌ Video not found or is private.")
+        return
+    except YouTubeAPIError as exc:
+        await query.edit_message_text(f"❌ API error: {exc}")
+        return
+
+    await query.edit_message_text(
+        f"📹 *{_esc(info['title'])}*\n"
+        f"📊 Expected comments: *{info['comment_count']:,}*\n\n"
+        "⏳ Fetching comments... this may take a while for large videos.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+    start_ts = time.time()
+    last_update = [0]
+
+    async def on_progress(count: int) -> None:
+        if count - last_update[0] >= 500:
+            last_update[0] = count
+            try:
+                await query.edit_message_text(
+                    f"📥 Fetching fresh comments...\n"
+                    f"✅ *{count:,}* fetched so far...",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+            except Exception:
+                pass
+
+    try:
+        comments = await fetch_all_comments(
+            video_id, progress_cb=on_progress, max_comments=config.MAX_COMMENTS
+        )
+    except CommentsDisabledError:
+        await query.edit_message_text("🔕 Comments are disabled on this video.")
+        return
+    except QuotaExceededError:
+        await query.edit_message_text("⚠️ YouTube API quota exceeded. Please try again tomorrow.")
+        return
+    except YouTubeAPIError as exc:
+        await query.edit_message_text(f"❌ Error fetching comments: {exc}")
+        return
+
+    elapsed = time.time() - start_ts
+    unique_users = len({c["author"] for c in comments})
+
+    db.save_comments(video_id, comments, info["title"])
+    cooldown_map[chat_id] = time.time()
+
+    logger.info(
+        "ADMIN | Re-fetch done | video_id=%s total=%d unique=%d elapsed=%.1fs",
+        video_id, len(comments), unique_users, elapsed,
+    )
+
+    await query.edit_message_text(
+        f"✅ *Re-fetched!*\n\n"
+        f"📹 *{_esc(info['title'])}*\n"
+        f"💬 Total comments: *{len(comments):,}*\n"
+        f"👥 Unique users: *{unique_users:,}*\n"
+        f"⏱ Fetched in: *{elapsed:.1f}s*\n\n"
+        "Choose an action below 👇",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=_main_keyboard(video_id),
+    )
+
 
 async def action_winner(query, video_id: str, n: int) -> None:
     meta = db.get_cache_meta(video_id)
